@@ -1,0 +1,110 @@
+from flask import Flask, jsonify, request
+from web3 import Web3
+
+app = Flask(__name__)
+
+# Connect to the Ethereum node (Infura, local node, or any Ethereum service provider)
+infura_url = 'https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID'
+w3 = Web3(Web3.HTTPProvider(infura_url))
+
+# Check if connected to Ethereum node
+if not w3.isConnected():
+    print("Failed to connect to Ethereum node!")
+else:
+    print("Successfully connected to Ethereum node!")
+
+# Example: Setting up contract details (address, ABI)
+# Replace with your actual contract address and ABI
+contract_address = '0xYourContractAddressHere'
+contract_abi = [
+    # Example ABI
+    {
+        "constant": True,
+        "inputs": [],
+        "name": "getBalance",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "payable": False,
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+# Initialize contract
+contract = w3.eth.contract(address=contract_address, abi=contract_abi)
+
+@app.route('/')
+def home():
+    return jsonify({"message": "Welcome to the DApp backend!"})
+
+@app.route('/balance', methods=['GET'])
+def get_balance():
+    """ Get balance of a particular Ethereum address """
+    address = request.args.get('address')
+
+    if not address:
+        return jsonify({"error": "Address is required"}), 400
+
+    try:
+        balance = contract.functions.getBalance().call()
+        return jsonify({"address": address, "balance": balance})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/send_transaction', methods=['POST'])
+def send_transaction():
+    """ Send a transaction to the Ethereum network """
+    data = request.get_json()
+
+    # Ensure the necessary fields are in the request body
+    from_address = data.get('from_address')
+    private_key = data.get('private_key')
+    to_address = data.get('to_address')
+    amount = data.get('amount')
+
+    if not all([from_address, private_key, to_address, amount]):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    try:
+        # Prepare the transaction
+        nonce = w3.eth.getTransactionCount(from_address)
+        transaction = {
+            'to': to_address,
+            'value': w3.toWei(amount, 'ether'),  # Convert Ether amount to Wei
+            'gas': 2000000,
+            'gasPrice': w3.toWei('20', 'gwei'),
+            'nonce': nonce,
+            'chainId': 1  # Mainnet
+        }
+
+        # Sign the transaction
+        signed_txn = w3.eth.account.signTransaction(transaction, private_key)
+
+        # Send the transaction
+        txn_hash = w3.eth.sendRawTransaction(signed_txn.rawTransaction)
+
+        return jsonify({"transaction_hash": txn_hash.hex()}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/get_transaction_status', methods=['GET'])
+def get_transaction_status():
+    """ Get the status of a transaction using its hash """
+    txn_hash = request.args.get('txn_hash')
+
+    if not txn_hash:
+        return jsonify({"error": "Transaction hash is required"}), 400
+
+    try:
+        txn_receipt = w3.eth.getTransactionReceipt(txn_hash)
+        if txn_receipt:
+            return jsonify({"txn_hash": txn_hash, "status": txn_receipt['status']})
+        else:
+            return jsonify({"error": "Transaction not found"}), 404
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
